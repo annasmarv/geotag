@@ -5,11 +5,15 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Aplikasi Absen Pegawai – Kamera Otomatis</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    /* Hindari video fullscreen di iOS saat diputar */
+    video { -webkit-transform: translateZ(0); }
+  </style>
 </head>
 <body class="bg-gray-900 text-gray-100 min-h-screen flex items-center justify-center p-4">
   <div class="w-full max-w-2xl bg-gray-800 rounded-2xl shadow-lg p-6">
     <h1 class="text-2xl font-bold mb-2">Absensi Pegawai</h1>
-    <p class="text-sm text-gray-400 mb-4">Isi nama, deteksi lokasi, ambil foto dari kamera, lalu hasilnya diberi stempel nama, koordinat, waktu (WIB), dan watermark. Semua diproses lokal di browser.</p>
+    <p class="text-sm text-gray-400 mb-4">Isi nama, deteksi lokasi, ambil foto dari kamera (bisa ganti kamera depan/belakang), lalu hasilnya diberi stempel nama, koordinat, waktu (WIB), dan watermark. Semua diproses lokal di browser.</p>
 
     <form id="absenForm" class="space-y-4">
       <!-- Nama -->
@@ -23,12 +27,15 @@
         <button type="button" id="btnLokasi" class="px-4 py-2 rounded-lg bg-blue-500 hover:bg-blue-600 font-semibold">📍 Deteksi Lokasi</button>
       </div>
       <div id="status" class="text-sm bg-gray-700 border border-gray-600 rounded-lg p-2">Menunggu lokasi… (klik "Deteksi Lokasi").</div>
-      <p class="text-xs text-gray-400">Geolokasi hanya berfungsi pada <b>HTTPS</b> (atau <code>localhost</code>). Jika izin lokasi ditolak, stempel tetap bisa dibuat namun koordinat akan kosong.</p>
+      <p class="text-xs text-gray-400">Geolokasi & kamera hanya berfungsi pada <b>HTTPS</b> (atau <code>localhost</code>).</p>
 
-      <!-- Preview Kamera -->
+      <!-- Preview Kamera & Switch -->
       <div class="mt-2">
-        <p class="text-xs text-gray-400 mb-1">🎥 Pratinjau Kamera</p>
-        <video id="video" autoplay playsinline class="w-full rounded-lg border border-gray-700"></video>
+        <div class="mb-2 flex items-center gap-2">
+          <p class="text-xs text-gray-400 flex-1">🎥 Pratinjau Kamera</p>
+          <button type="button" id="btnSwitch" class="px-3 py-2 rounded-lg bg-slate-600 hover:bg-slate-500 text-sm font-semibold">🔁 Ubah Kamera</button>
+        </div>
+        <video id="video" autoplay playsinline muted class="w-full rounded-lg border border-gray-700"></video>
       </div>
 
       <!-- Ambil Foto -->
@@ -53,6 +60,7 @@
   </div>
 
   <script>
+    // ==== Util ====
     function formatWIB(date = new Date()) {
       return new Intl.DateTimeFormat('id-ID', {
         timeZone: 'Asia/Jakarta', year: 'numeric', month: '2-digit', day: '2-digit',
@@ -64,6 +72,7 @@
 
     const namaEl = document.getElementById('nama');
     const btnLokasi = document.getElementById('btnLokasi');
+    const btnSwitch = document.getElementById('btnSwitch');
     const btnCapture = document.getElementById('btnCapture');
     const btnDownload = document.getElementById('btnDownload');
     const btnReset = document.getElementById('btnReset');
@@ -73,18 +82,10 @@
     const yearEl = document.getElementById('year'); yearEl.textContent = new Date().getFullYear();
 
     let geo = null;
+    let currentFacing = 'user'; // default: kamera depan
+    let currentStream = null;
 
-    // Start camera stream
-    async function startCamera() {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
-        video.srcObject = stream;
-      } catch (err) {
-        alert('Tidak bisa mengakses kamera: ' + err.message);
-      }
-    }
-    startCamera();
-
+    // ==== Lokasi ====
     async function getLocation() {
       if (!('geolocation' in navigator)) { statusEl.textContent = 'Geolokasi tidak didukung browser ini.'; return; }
       statusEl.textContent = 'Meminta izin lokasi…';
@@ -98,6 +99,52 @@
     }
     btnLokasi.addEventListener('click', getLocation);
 
+    // ==== Kamera ====
+    function stopStream() {
+      try { currentStream?.getTracks().forEach(t => t.stop()); } catch(e){}
+      video.srcObject = null;
+    }
+
+    async function startCamera(facing = 'user') {
+      stopStream();
+      // Prefer facingMode, fallback ke deviceId jika diperlukan (Safari/iOS bisa rewel)
+      let constraints = { video: { facingMode: { exact: facing }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false };
+      try {
+        currentStream = await navigator.mediaDevices.getUserMedia(constraints);
+      } catch (e1) {
+        // Fallback: jangan pakai exact
+        constraints = { video: { facingMode: facing, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false };
+        try {
+          currentStream = await navigator.mediaDevices.getUserMedia(constraints);
+        } catch (e2) {
+          // Fallback terakhir: pilih deviceId manual (butuh izin kamera sekali supaya labels muncul)
+          const devices = await navigator.mediaDevices.enumerateDevices();
+          const cams = devices.filter(d => d.kind === 'videoinput');
+          // heuristik: cari label yang mengandung 'front' untuk user, 'back'/'rear' untuk environment
+          const pick = cams.find(d => new RegExp(facing === 'user' ? 'front|depan' : 'back|rear|belakang', 'i').test(d.label)) || cams[0];
+          if (!pick) throw e2;
+          currentStream = await navigator.mediaDevices.getUserMedia({ video: { deviceId: { exact: pick.deviceId } }, audio: false });
+        }
+      }
+      video.srcObject = currentStream;
+      currentFacing = facing;
+      // Update label tombol
+      btnSwitch.textContent = currentFacing === 'user' ? '🔁 Ubah Kamera (Belakang)' : '🔁 Ubah Kamera (Depan)';
+    }
+
+    // Mulai dengan kamera depan (user)
+    if (navigator.mediaDevices?.getUserMedia) {
+      startCamera('user');
+    } else {
+      alert('Browser Anda tidak mendukung getUserMedia. Gunakan browser modern (Chrome/Edge/Firefox/Safari) di HTTPS.');
+    }
+
+    btnSwitch.addEventListener('click', async () => {
+      const next = currentFacing === 'user' ? 'environment' : 'user';
+      await startCamera(next);
+    });
+
+    // ==== Utility Canvas ====
     function roundRect(ctx, x, y, w, h, r) {
       const min = Math.min(w, h); if (r > min/2) r = min/2;
       ctx.beginPath();
@@ -109,10 +156,13 @@
       ctx.closePath();
     }
 
+    // ==== Ambil Foto ====
     btnCapture.addEventListener('click', () => {
       if (!namaEl.value.trim()) { alert('Isi nama dulu.'); return; }
       const w = video.videoWidth;
       const h = video.videoHeight;
+      if (!w || !h) { alert('Kamera belum siap.'); return; }
+
       canvas.width = w;
       canvas.height = h;
       const ctx = canvas.getContext('2d');
@@ -139,6 +189,7 @@
       const padX = base, padY = base;
       const boxW = textW + padX * 2;
       const boxH = textH + padY * 2;
+
       const margin = base;
       const x = margin, y = h - boxH - margin;
 
@@ -181,12 +232,16 @@
       }, 'image/jpeg', 0.92);
     });
 
+    // ==== Reset ====
     btnReset.addEventListener('click', () => {
       canvas.width = canvas.height = 0;
       btnDownload.classList.add('hidden');
       statusEl.textContent = 'Form direset. Klik Deteksi Lokasi untuk memuat koordinat.';
       geo = null;
     });
+
+    // Bersihkan stream saat tab ditutup/refresh
+    window.addEventListener('beforeunload', stopStream);
   </script>
 </body>
 </html>
