@@ -8,6 +8,7 @@
   <style>
     /* Hindari video fullscreen di iOS saat diputar */
     video { -webkit-transform: translateZ(0); }
+    a.link { text-decoration: underline; }
   </style>
 </head>
 <body class="bg-gray-900 text-gray-100 min-h-screen flex items-center justify-center p-4">
@@ -16,20 +17,20 @@
     <p class="text-sm text-gray-400 mb-4">Isi nama, deteksi lokasi, ambil foto dari kamera (bisa ganti kamera depan/belakang), lalu hasilnya diberi stempel nama, koordinat, waktu (WIB), dan watermark. Semua diproses lokal di browser.</p>
 
     <form id="absenForm" class="space-y-4">
-      <!-- Nama -->
+      <!-- 1) Nama -->
       <div>
         <label for="nama" class="block text-sm font-medium mb-1">Nama Lengkap</label>
         <input id="nama" name="nama" type="text" placeholder="Mis. Radhiya Usman" required class="w-full rounded-lg bg-gray-700 border border-gray-600 p-3 focus:ring-2 focus:ring-blue-500 outline-none" />
       </div>
 
-      <!-- Deteksi Lokasi -->
+      <!-- 2) Deteksi Lokasi -->
       <div>
         <button type="button" id="btnLokasi" class="px-4 py-2 rounded-lg bg-blue-500 hover:bg-blue-600 font-semibold">📍 Deteksi Lokasi</button>
       </div>
-      <div id="status" class="text-sm bg-gray-700 border border-gray-600 rounded-lg p-2">Menunggu lokasi… (klik "Deteksi Lokasi").</div>
+      <div id="status" class="text-sm bg-gray-700 border border-gray-600 rounded-lg p-2">Menunggu lokasi… (klik &quot;Deteksi Lokasi&quot;).</div>
       <p class="text-xs text-gray-400">Geolokasi & kamera hanya berfungsi pada <b>HTTPS</b> (atau <code>localhost</code>).</p>
 
-      <!-- Preview Kamera & Switch -->
+      <!-- 3) Pratinjau Kamera + switch -->
       <div class="mt-2">
         <div class="mb-2 flex items-center gap-2">
           <p class="text-xs text-gray-400 flex-1">🎥 Pratinjau Kamera</p>
@@ -38,18 +39,18 @@
         <video id="video" autoplay playsinline muted class="w-full rounded-lg border border-gray-700"></video>
       </div>
 
-      <!-- Ambil Foto -->
+      <!-- 4) Ambil Foto -->
       <div>
         <button type="button" id="btnCapture" class="px-4 py-2 rounded-lg bg-yellow-500 hover:bg-yellow-600 font-semibold">📸 Ambil Foto</button>
       </div>
 
-      <!-- Hasil Foto Berstempel -->
+      <!-- 5) Hasil Foto Berstempel -->
       <div class="mt-2">
         <p class="text-xs text-gray-400 mb-1">🖨️ Hasil Foto Berstempel</p>
         <canvas id="canvas" class="rounded-lg border border-gray-700 w-full"></canvas>
       </div>
 
-      <!-- Unduh dan Reset -->
+      <!-- 6) Unduh & Reset -->
       <div class="flex flex-wrap gap-2">
         <a id="btnDownload" class="hidden px-4 py-2 rounded-lg bg-green-500 hover:bg-green-600 font-semibold" href="#" download>⬇️ Unduh Foto</a>
         <button type="reset" id="btnReset" class="px-4 py-2 rounded-lg bg-red-500 hover:bg-red-600 font-semibold">↺ Reset</button>
@@ -67,7 +68,6 @@
         hour: '2-digit', minute: '2-digit', second: '2-digit'
       }).format(date);
     }
-    function pad2(n){ return String(n).padStart(2,'0'); }
     function fileSafe(s){ return s.replace(/[^\p{L}\p{N}_-]+/gu, '_').slice(0, 40) || 'absen'; }
 
     const namaEl = document.getElementById('nama');
@@ -92,7 +92,10 @@
       navigator.geolocation.getCurrentPosition(pos => {
         const { latitude, longitude, accuracy } = pos.coords;
         geo = { lat: latitude, lng: longitude, acc: accuracy };
-        statusEl.textContent = `Lokasi: ${latitude.toFixed(6)}, ${longitude.toFixed(6)} (±${Math.round(accuracy)} m)`;
+        const lat = latitude.toFixed(6);
+        const lng = longitude.toFixed(6);
+        const mapUrl = `https://www.google.com/maps?q=${lat},${lng}`;
+        statusEl.innerHTML = `📍 Lokasi: <a class="underline text-blue-400 hover:text-blue-300" href="${mapUrl}" target="_blank" rel="noopener">${lat}, ${lng}</a> (±${Math.round(accuracy)} m)`;
       }, err => {
         statusEl.textContent = 'Gagal ambil lokasi: ' + err.message;
       }, { enableHighAccuracy: true, timeout: 12000, maximumAge: 15000 });
@@ -120,7 +123,6 @@
           // Fallback terakhir: pilih deviceId manual (butuh izin kamera sekali supaya labels muncul)
           const devices = await navigator.mediaDevices.enumerateDevices();
           const cams = devices.filter(d => d.kind === 'videoinput');
-          // heuristik: cari label yang mengandung 'front' untuk user, 'back'/'rear' untuk environment
           const pick = cams.find(d => new RegExp(facing === 'user' ? 'front|depan' : 'back|rear|belakang', 'i').test(d.label)) || cams[0];
           if (!pick) throw e2;
           currentStream = await navigator.mediaDevices.getUserMedia({ video: { deviceId: { exact: pick.deviceId } }, audio: false });
@@ -128,11 +130,9 @@
       }
       video.srcObject = currentStream;
       currentFacing = facing;
-      // Update label tombol
       btnSwitch.textContent = currentFacing === 'user' ? '🔁 Ubah Kamera (Belakang)' : '🔁 Ubah Kamera (Depan)';
     }
 
-    // Mulai dengan kamera depan (user)
     if (navigator.mediaDevices?.getUserMedia) {
       startCamera('user');
     } else {
@@ -171,7 +171,10 @@
       const nama = namaEl.value.trim();
       const now = new Date();
       const waktuWIB = formatWIB(now);
-      const latlng = geo ? `${geo.lat.toFixed(6)}, ${geo.lng.toFixed(6)} (±${Math.round(geo.acc)}m)` : 'Lokasi tidak tersedia';
+      const latText = geo ? geo.lat.toFixed(6) : null;
+      const lngText = geo ? geo.lng.toFixed(6) : null;
+      const accText = geo ? ` (±${Math.round(geo.acc)}m)` : '';
+      const latlng = geo ? `${latText}, ${lngText}${accText}` : 'Lokasi tidak tersedia';
 
       const lines = [
         `Nama : ${nama}`,
@@ -211,7 +214,7 @@
         ty += base + lineGap;
       }
 
-      // Watermark
+      // Watermark diagonal
       ctx.save();
       ctx.globalAlpha = 0.15;
       ctx.fillStyle = '#ffffff';
@@ -240,7 +243,20 @@
       geo = null;
     });
 
+    // ==== Inisialisasi Kamera default (depan) & switch ====
+    if (navigator.mediaDevices?.getUserMedia) {
+      startCamera('user');
+    } else {
+      alert('Browser Anda tidak mendukung getUserMedia. Gunakan browser modern (Chrome/Edge/Firefox/Safari) di HTTPS.');
+    }
+
+    btnSwitch.addEventListener('click', async () => {
+      const next = currentFacing === 'user' ? 'environment' : 'user';
+      await startCamera(next);
+    });
+
     // Bersihkan stream saat tab ditutup/refresh
+    function stopStream() { try { currentStream?.getTracks().forEach(t => t.stop()); } catch(e){} }
     window.addEventListener('beforeunload', stopStream);
   </script>
 </body>
